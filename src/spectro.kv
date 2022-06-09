@@ -1,0 +1,70 @@
+#:import Led lib_spectro.led.Led
+#:import Transition kivy.uix.screenmanager.FadeTransition
+
+BoxLayout:
+    orientation: "horizontal"
+    BoxLayout:
+        orientation: "vertical"
+        size_hint_x: None
+        width: dp(250)
+        spacing: dp(20)
+        padding: dp(20)
+        Label:
+            id: connect_label
+            text: "Non Connecté"
+            size_hint_y: None
+            height: dp(50)
+            background_color: 1,0,0,1
+            canvas.before:
+                Color:
+                    rgba: self.background_color
+                # size and position of Canvas
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [2]
+        BoxLayout:
+            orientation: "horizontal"
+            size_hint_y: None
+            height: dp(50)
+            Led:
+                id: led_in
+                source: 'lib_spectro/shapes/contour_squarerounded_I.png'
+                auto_off: True
+                auto_off_delay: 0.1
+            Led:
+                id: led_out
+                source: 'lib_spectro/shapes/contour_squarerounded_O.png'
+                auto_off: True
+                auto_off_delay: 0.1
+        GridLayout:
+            cols: 1
+            ScreenButton:
+                state: "down"
+                text: "Spectromètre"
+                on_press: screen_manager.current = "device"
+            ScreenButton:
+                text: "Spectre"
+                on_press: screen_manager.current = "spectrum"
+            ScreenButton:
+                text: "Absorbance"
+                on_press: screen_manager.current = "absorbance"
+            ScreenButton:
+                text: "Cinétique"
+                on_press: screen_manager.current = "kinetics"
+        SpecButton:
+            text: "Quitter"
+            on_release: app.stop()
+    ScreenManager:
+        id: screen_manager
+        transition: Transition()
+
+<SpecButton@Button>:
+    size_hint_y: None
+    height: dp(100)
+
+<ScreenButton@ToggleButton>:
+    size_hint_y: None
+    height: dp(100)
+    group: "screens"
+    allow_no_selection: False
