@@ -11,10 +11,8 @@ if platform in ['win', 'linux']:
     Config.set('graphics','window_state','maximized')
 
 from kivy.app import App
-from kivy.uix.popup import Popup
 from kivy.logger import Logger, LOG_LEVELS
 from kivy.clock import Clock, mainthread
-from kivy.uix.screenmanager import ScreenManager, FadeTransition, Screen
 from device_screen import DeviceScreen
 from spectrum_screen import SpectrumScreen
 from absorbance_screen import AbsorbanceScreen
@@ -24,12 +22,28 @@ from popups import PopupMessage
 Logger.setLevel(LOG_LEVELS['debug'])
 
 
+class Spectrometer:
+    """Spectrometer : spectrometer frontend"""
+    def __init__(self):
+        Logger.info("Spectrometer: Creating backend object")
+        self.backend = S250Prim()
+
+    def __getattribute__(self, item):
+        """__getattribute__ : try to get the attribute (data or method) in the frontend then look in the backend"""
+        Logger.debug("Spectrometer: getting attribute {}".format(item))
+        try:
+            return super().__getattribute__(item)
+        except AttributeError:
+            Logger.debug("Spectrometer: not in frontend looking {} in backend".format(item))
+            return self.backend.__getattribute__(item)
+
+
 # -------------- Main App
 class SpectroApp(App):
     # ---- Data
     title = "Spectro" + " v" + __version__
     ports_update_event = None
-    spectro = S250Prim()
+    spectro = Spectrometer()
     serial_port = None
     devicescreen = None
     spectrumscreen = None

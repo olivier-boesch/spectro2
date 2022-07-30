@@ -50,6 +50,9 @@ Secoman_Models = {b'T\x00': 'S250 I+/E+', b'T\x01': 'S250 T+', b'P\x02': 'Prim A
 
 # prefix, command, n_data, callback, timeout, callback_progress
 
+class NotConnectedError(Exception):
+    pass
+
 
 class CommandThread(Thread):
     def __init__(self, spectro, cmd_queue: Queue):
@@ -59,18 +62,18 @@ class CommandThread(Thread):
         self.command_queue = cmd_queue
         self.stop = False
 
-    def run(self) -> None:
+    def run(self):
         Logger.info("S250: Starting command thread")
         while not self.stop:
             try:
                 cmd_details = self.command_queue.get(block=True, timeout=1)
                 Logger.info("S250 Thread: getting command {!r}".format(str(cmd_details)))
-                self.treat_command(cmd_details)
+                self.process_command(cmd_details)
             except Empty:
                 Logger.debug("S250 Thread: timeout !")
         Logger.info("S250: Thread about to stop")
 
-    def treat_command(self, command_details):
+    def process_command(self, command_details):
         return_value = None
         if not self.spectro.connected:
             return
@@ -89,7 +92,7 @@ class CommandThread(Thread):
                 elif data == Ans_Init_Nok:
                     return_value = False
                 else:
-                    return_value = None
+                    return_value = data
             # ask for firmware version
             elif cmd_sent == Cmd_Firmware:
                 s = struct.unpack(">xB", data)[0]
@@ -147,22 +150,23 @@ class S250Prim:
     serialComParameters = {'baudrate': 4800, 'bytesize': 8, 'parity': 'N',
                            'stopbits': 1}
     device_capabilities = {'serialcomparameters': serialComParameters, 'device': waveLengthLimits}
-    connected = False
-    zero_data = 0.
-    spectrum_data = None
-    spectrum_data_idx = None
-    conn = None
-    command_queue = Queue()
-    command_thread = None
 
     def __init__(self, activity_out_clbk=None, activity_in_clbk=None):
+        self.connected = False
+        self.zero_data = 0.
+        self.spectrum_data = None
+        self.spectrum_data_idx = None
+        self.conn = None
+        self.command_queue = Queue()
+        self.command_thread = None
         self.activity_in_clbk = activity_in_clbk
         self.activity_out_clbk = activity_out_clbk
         self.command_thread = CommandThread(self, self.command_queue)
 
     def __del__(self):
-        self.stop = True
-        self.command_thread.join()
+        if self.command_thread.is_alive():
+            self.stop = True
+            self.command_thread.join()
 
     def send(self, s):
         if self.connected:
@@ -171,6 +175,8 @@ class S250Prim:
             Logger.debug("Serial: command sent {!r}".format(s))
             n = self.conn.write(s)
             return n
+        else:
+            raise NotConnectedError
 
     def receive(self, n, timeout=0):
         if self.connected:
@@ -180,6 +186,8 @@ class S250Prim:
                 self.activity_in_clbk()
             Logger.debug("Serial: data received {!r}".format(c))
             return c
+        else:
+            raise NotConnectedError
 
     def thread_send(self, prefix=b'', command=b'', payload=b'', n=0, clbk=None, timeout=5, progress_clbk=None):
         command_details = prefix, command, payload, n, clbk, timeout, progress_clbk
@@ -229,50 +237,84 @@ class S250Prim:
         self.connected = False
 
     def start_device(self, clbk=None):
-        """ start_device : start spectrometer and test if initialization of spectrometer is completed - no arguments"""
+        """ start_device : start spectrometer and test if initialization of spectrometer is completed
+        clbk: function called when the command is processed clbk(retval)
+            retval is True is init successful, False if not and the raw data if something weird happened"""
         self.thread_send(command=Cmd_Init, n=1, clbk=clbk)
 
-    def stop_device(self):
-        """stop_device : stop spectrometer - no arguments"""
-        self.thread_send(prefix=Cmd_Prefix, command=Cmd_Stop, n=0, clbk=None)
+    def stop_device(self, clbk=None):
+        """stop_device : stop spectrometer
+        clbk: function called when the command is processed - no guarantee that the spectro is actually off"""
+        self.thread_send(prefix=Cmd_Prefix, command=Cmd_Stop, n=0, clbk=clbk)
 
     def is_device_ready(self, clbk=None):
-        """ is_device_ready : test if device is up and ready - no arguments"""
-        self.thread_send(command=Cmd_Init, n=1, clbk=clbk)
+        """ is_device_ready : test if device is up and ready
+        this is an alias to the start_device method"""
+        self.start_device(clbk=clbk)
 
     def get_firmware_version(self, clbk=None):
-        """ get_firmware_version : get and return Prom version - no arguments"""
+        """ get_firmware_version : get and return Prom version
+        clbk: """
         self.thread_send(prefix=Cmd_Prefix, command=Cmd_Firmware, n=2, clbk=clbk)
 
     def get_model_name(self, clbk=None):
-        """ get_model_name : return complete model name - no arguments"""
+        """ get_model_name : return complete model name
+        clbk: """
         self.thread_send(prefix=Cmd_Prefix, command=Cmd_GetType, n=2, clbk=clbk)
 
     def perform_autotest(self, clbk=None):
-        """ perform_autotest : performs AutoTest of spectrometer - no arguments"""
+        """ perform_autotest : performs AutoTest of spectrometer
+        clbk: """
         self.thread_send(prefix=Cmd_Prefix, command=Cmd_Autotest, n=1, clbk=clbk)
 
     def set_abs_wavelength(self, wl, gain=255, clbk=None):
-        """ set_abs_wavelength : Set value of wavelength - [wl in nm] [gain from 0 to 255]"""
+        """ set_abs_wavelength : Set value of wavelength - [wl in nm] [gain from 0 to 255]
+        clbk: """
         self.conn.flush()
         data = struct.pack(">HxxB", wl, gain)
         self._thread_send(prefix=Cmd_Prefix, command=Cmd_SetAbsWavelength, payload=data, n=1, clbk=clbk)
 
     def get_abs_zero(self, clbk=None):
-        """ get_abs_zero : get value of absorbance zero - no arguments"""
+        """ get_abs_zero : get value of absorbance zero
+        clbk: """
         self.thread_send(Cmd_Prefix + Cmd_GetZeroAbs, 1, clbk)
 
     def get_abs(self, clbk=None):
-        """ get_abs : get value of absorbance - no arguments"""
+        """ get_abs : get value of absorbance
+        clbk: """
         self.thread_send(Cmd_Prefix + Cmd_GetAbs, 1, clbk)
 
     def make_spectrum_baseline(self, wllo, wlhi, speed=8, res=3, clbk=None):
         """ make_spectrum_baseline : performs baseline of spectrum
                                      [wlLo in nm] [wlHi in nm] [speed from 1 to 8] [res = 3]"""
         data = struct.pack(">HHBBxx", wllo, wlhi, res, speed)
+        # TODO : intergrate in thread_send !
         self.send(Cmd_Prefix + Cmd_BaseLine + data, 1, clbk)
 
     def get_spectrum(self, clbk=None):
         """ get_spectrum_header : Gets and returns spectrum header - no arguments"""
         self.conn.flush()
         self.thread_send(Cmd_Prefix + Cmd_GetSpectrum, 7, clbk)
+
+
+def test_list_ports():
+    l = S250Prim.list_ports()
+    print(l)
+    # assert l != []
+
+def test_on_off():
+    def clbk_on(ret):
+        assert ret == True
+        print("device is on")
+
+    def clbk_off(ret):
+        print("device is off")
+
+    import time
+    s = S250Prim()
+    p = S250Prim.list_ports()[0]
+    s.connect(p)
+    if s.connected:
+        s.start_device(clbk=clbk_on)
+        time.sleep(2)
+        s.stop_device(clbk=clbk_off)
